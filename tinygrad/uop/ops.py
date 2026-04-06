@@ -51,6 +51,20 @@ def _align_left(*shapes:tuple[sint, ...]) -> tuple[tuple[sint, ...], ...]:
 def _broadcast_shape(*shapes:tuple[sint, ...]) -> tuple[sint, ...]:
   return tuple(0 if 0 in nth_dim_sizes else smax(nth_dim_sizes) for nth_dim_sizes in zip(*_align_left(*shapes)))
 
+def _reshape_int_fastpath(ps:tuple[int, ...], marg:tuple[int, ...]) -> tuple[int, ...]|None:
+  if ps == marg: return marg
+  if len(ps) == len(marg)+1 and ps[-1] == 1 and ps[:-1] == marg: return marg
+  if len(ps)+1 == len(marg) and marg[-1] == 1 and ps == marg[:-1]: return marg
+  if len(ps) == len(marg)+1 and ps[:-2] == marg[:-1] and ps[-2] * ps[-1] == marg[-1]: return marg
+  if len(ps)+1 == len(marg) and ps[:-1] == marg[:-2] and ps[-1] == marg[-2] * marg[-1]: return marg
+  if len(ps) != len(marg):
+    small, large = (ps, marg) if len(ps) < len(marg) else (marg, ps)
+    extra = len(large) - len(small)
+    for start in range(extra+1):
+      if large[start:start+len(small)] == small and all(x == 1 for x in large[:start]) and all(x == 1 for x in large[start+len(small):]):
+        return marg
+  return None
+
 def ssimplify(uop:sint): return uop.ssimplify() if isinstance(uop, UOp) else uop
 def sym_infer(uop: UOp|int, var_vals: dict[str, int]) -> int: return uop.sym_infer(var_vals) if isinstance(uop, UOp) else uop
 
@@ -336,6 +350,7 @@ class UOp(OpMixin, metaclass=UOpMetaClass):
       match self.op:
         case Ops.RESHAPE:
           if not all(x >= 0 for x in marg): raise ValueError(f"shape can't contain negative numbers {marg}")
+          if all_int(ps) and all_int(marg) and (fast:=_reshape_int_fastpath(ps, marg)) is not None: return fast
           if prod(ps) != prod(marg): raise ValueError(f"bad reshape: {ps} -> {marg}")
           return marg
         case Ops.EXPAND:
